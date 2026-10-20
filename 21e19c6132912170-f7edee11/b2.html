@@ -501,7 +501,7 @@ const MAIL_TO='zhilongxu+board@mail.grokbot.com',MAIL_MAX=1800;
 const BOARD_NAME=(()=>{const dt=/^\d{4}-\d{2}-\d{2}$/.test('2026-10-20')?'2026-10-20':today(),m=BATCH.match(/第\d+批/),mob=/手机/.test(BATCH);return `${dt}-v4.1${mob?'-手机':''}${m?'-'+m[0]:''}`})();
 if(!S.sub)S.sub={};if(!Array.isArray(S.outbox))S.outbox=[];
 /* 直接提交：表单转发服务（FormSubmit）把内容转成邮件发到釉光邮箱；端点 ID 是公开别名，不是密钥 */
-const FORM_EP='https://formsubmit.co/ajax/zhilongxu+board@mail.grokbot.com',DIRECT=/^https:\/\//.test(FORM_EP),CHUNK=60;
+const FORM_EP='https://formsubmit.co/ajax/3906771079e2bf02e195eb9a66d8a2a7',DIRECT=/^https:\/\//.test(FORM_EP),CHUNK=60;
 function TEST(){return S.who==='釉光自测'||/[?&]ygtest=1/.test(location.search)}
 function sigOf(r){return JSON.stringify([r.rating,r.tags,r.reasons,r.note])}
 function pendingRows(all){return rows().filter(r=>all||S.sub[r.id]!==sigOf(r))}
