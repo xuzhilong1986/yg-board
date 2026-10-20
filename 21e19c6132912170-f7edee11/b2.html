@@ -501,7 +501,7 @@ const MAIL_TO='zhilongxu+board@mail.grokbot.com',MAIL_MAX=1800;
 const BOARD_NAME=(()=>{const dt=/^\d{4}-\d{2}-\d{2}$/.test('2026-10-20')?'2026-10-20':today(),m=BATCH.match(/第\d+批/),mob=/手机/.test(BATCH);return `${dt}-v4.1${mob?'-手机':''}${m?'-'+m[0]:''}`})();
 if(!S.sub)S.sub={};if(!Array.isArray(S.outbox))S.outbox=[];
 /* 直接提交：表单转发服务（FormSubmit）把内容转成邮件发到釉光邮箱；端点 ID 是公开别名，不是密钥 */
-const FORM_EP='https://formsubmit.co/ajax/3906771079e2bf02e195eb9a66d8a2a7',DIRECT=/^https:\/\//.test(FORM_EP),CHUNK=60;
+const FORM_EP='https://formsubmit.co/ajax/3906771079e2bf02e195eb9a66d8a2a7',DIRECT=/^https:\/\//.test(FORM_EP)&&/^https?:$/.test(location.protocol),CHUNK=60;
 function TEST(){return S.who==='釉光自测'||/[?&]ygtest=1/.test(location.search)}
 function sigOf(r){return JSON.stringify([r.rating,r.tags,r.reasons,r.note])}
 function pendingRows(all){return rows().filter(r=>all||S.sub[r.id]!==sigOf(r))}
@@ -518,7 +518,8 @@ function splitMails(rs){/* 贪心装封：每封 mailto 总长 ≤ MAIL_MAX；�
  const k=groups.length;return groups.map((g,j)=>{const url=mailtoOf(subjectOf(g.length,j+1,k),bodyOf(g,j+1,k));return{rs:g,url,i:j+1,k,over:url.length>MAIL_MAX}})}
 let SUB=null;window.__mailtoLog=[];const IN_WX=/MicroMessenger/i.test(navigator.userAgent||'');
 function openMail(url){window.__mailtoLog.push(url);const a=document.createElement('a');a.href=url;a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
-function markSent(rs){if(!SUB.undo)SUB.undo={};for(const r of rs){if(!(r.id in SUB.undo))SUB.undo[r.id]=S.sub[r.id];S.sub[r.id]=sigOf(r)}S.subLast={n:rs.length,ts:Date.now()};save();subBadge()}
+function dropQueued(rs){const ids={};for(const r of rs)ids[r.id]=1;S.outbox=S.outbox.map(j=>Object.assign({},j,{rows:j.rows.filter(r=>!ids[r.id])})).filter(j=>j.rows.length)}
+function markSent(rs){dropQueued(rs);if(!SUB.undo)SUB.undo={};for(const r of rs){if(!(r.id in SUB.undo))SUB.undo[r.id]=S.sub[r.id];S.sub[r.id]=sigOf(r)}S.subLast={n:rs.length,ts:Date.now()};save();subBadge()}
 function undoMark(){if(!SUB||!SUB.undo)return;for(const[id,v]of Object.entries(SUB.undo)){if(v===undefined)delete S.sub[id];else S.sub[id]=v}SUB.undo=null;save();subBadge();toast('已撤回标记，下次会重新提交这些条目');renderSubmit()}
 function subBadge(){const n=pendingRows().length,q=queuedRows().length;$('#mSubN').textContent=q?`待重试 ${q} 条${n?` · 新 ${n} 条`:''}`:n?`待提交 ${n} 条`:'已全部提交'}
 async function copyText(t){try{await navigator.clipboard.writeText(t);return true}catch(e){const ta=$('#subRaw');ta.value=t;ta.classList.add('on');ta.focus();ta.select();try{return document.execCommand('copy')}catch(_){return false}}}
