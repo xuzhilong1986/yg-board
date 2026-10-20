@@ -489,13 +489,16 @@ dirUI();
 /* ---------- 提交给釉光：走邮件（mailto），短的直接带进正文，长的分封或走剪贴板 ---------- */
 const MAIL_TO='zhilongxu+board@mail.grokbot.com',MAIL_MAX=1800;
 const BOARD_NAME=(()=>{const dt=/^\d{4}-\d{2}-\d{2}$/.test('2026-10-20')?'2026-10-20':today(),m=BATCH.match(/第\d+批/),mob=/手机/.test(BATCH);return `${dt}-v4.1${mob?'-手机':''}${m?'-'+m[0]:''}`})();
-if(!S.sub)S.sub={};
+if(!S.sub)S.sub={};if(!Array.isArray(S.outbox))S.outbox=[];
+/* 直接提交：表单转发服务（FormSubmit）把内容转成邮件发到釉光邮箱；端点 ID 是公开别名，不是密钥 */
+const FORM_EP='https://formsubmit.co/ajax/zhilongxu+board@mail.grokbot.com',DIRECT=/^https:\/\//.test(FORM_EP),CHUNK=60;
+function TEST(){return S.who==='釉光自测'||/[?&]ygtest=1/.test(location.search)}
 function sigOf(r){return JSON.stringify([r.rating,r.tags,r.reasons,r.note])}
 function pendingRows(all){return rows().filter(r=>all||S.sub[r.id]!==sigOf(r))}
 function textLine(r){return `${r.id} ${r.rating||'未评'}${r.tags.length?' '+r.tags.join(' '):''}${r.reasons.length?' '+r.reasons.join(' '):''}${r.note?' | '+r.note:''}`}
-function jsonOf(rs,part,withBrand){const o={annotator:S.who||'未署名',date:today(),board:BOARD_NAME};if(part)o.part=part;
+function jsonOf(rs,part,withBrand){const o={annotator:S.who||'未署名',date:today(),board:BOARD_NAME};if(TEST())o.test=true;if(part)o.part=part;
  o.items=rs.map(r=>{const it={id:r.id};if(withBrand)it.brand=r.brand;it.rating=r.rating;it.tags=r.tags;it.reasons=r.reasons;it.note=r.note;return it});return JSON.stringify(o)}
-function subjectOf(n,i,k){return `釉光标注｜${S.who||'未署名'}｜${BOARD_NAME}｜${n}条${k>1?`｜第${i}/${k}封`:''}`}
+function subjectOf(n,i,k){return `釉光标注｜${S.who||'未署名'}｜${BOARD_NAME}｜${n}条${k>1?`｜第${i}/${k}封`:''}${TEST()?'｜自测':''}`}
 function bodyOf(rs,i,k,withBrand){const head=`釉光看板标注提交${k>1?`（第${i}封/共${k}封）`:''}，${rs.length}条，请直接发送：`;
  return `${head}\n\n${rs.map(textLine).join('\n')}\n\n---JSON---\n${jsonOf(rs,k>1?`${i}/${k}`:'',withBrand)}\n---END---\n`}
 function enc(t){/* RFC 6068 允许 , ; : @ 不转义，省长度 */return encodeURIComponent(t).replace(/%2C/g,',').replace(/%3A/g,':').replace(/%3B/g,';').replace(/%40/g,'@')}
@@ -507,16 +510,42 @@ let SUB=null;window.__mailtoLog=[];const IN_WX=/MicroMessenger/i.test(navigator.
 function openMail(url){window.__mailtoLog.push(url);const a=document.createElement('a');a.href=url;a.rel='noopener';document.body.appendChild(a);a.click();a.remove()}
 function markSent(rs){if(!SUB.undo)SUB.undo={};for(const r of rs){if(!(r.id in SUB.undo))SUB.undo[r.id]=S.sub[r.id];S.sub[r.id]=sigOf(r)}S.subLast={n:rs.length,ts:Date.now()};save();subBadge()}
 function undoMark(){if(!SUB||!SUB.undo)return;for(const[id,v]of Object.entries(SUB.undo)){if(v===undefined)delete S.sub[id];else S.sub[id]=v}SUB.undo=null;save();subBadge();toast('已撤回标记，下次会重新提交这些条目');renderSubmit()}
-function subBadge(){const n=pendingRows().length;$('#mSubN').textContent=n?`待提交 ${n} 条`:'已全部提交'}
+function subBadge(){const n=pendingRows().length,q=queuedRows().length;$('#mSubN').textContent=q?`待重试 ${q} 条${n?` · 新 ${n} 条`:''}`:n?`待提交 ${n} 条`:'已全部提交'}
 async function copyText(t){try{await navigator.clipboard.writeText(t);return true}catch(e){const ta=$('#subRaw');ta.value=t;ta.classList.add('on');ta.focus();ta.select();try{return document.execCommand('copy')}catch(_){return false}}}
 function askWho(then){const b=$('#subBody');b.innerHTML=`<p>提交前先留个名字，方便釉光区分是谁标的。</p><input id="subWho" placeholder="你的名字" autocomplete="name"><div class="acts"><button class="gbtn" data-s="close">取消</button><button class="pbtn" data-s="who">继续</button></div>`;
  $('#subM').classList.add('on');setTimeout(()=>$('#subWho').focus(),30);SUB={then}}
-function openSubmit(all){menu(false);if(!rows().length)return toast('还没有任何标注');
- if(!S.who)return askWho(()=>openSubmit(all));SUB={all:!!all,undo:null};$('#subM').classList.add('on');renderSubmit()}
+function queuedRows(){const m={};for(const j of S.outbox)for(const r of j.rows)m[r.id]=r;return Object.keys(m).sort().map(k=>m[k])}
+function enqueue(rs){const k=Math.ceil(rs.length/CHUNK),ts=Date.now();for(let i=0;i<k;i++){const g=rs.slice(i*CHUNK,(i+1)*CHUNK);S.outbox.push({jid:ts.toString(36)+'-'+i,ts,part:k>1?[i+1,k]:null,rows:g})}
+ for(const r of rs)S.sub[r.id]=sigOf(r);save();subBadge()}
+function payloadOf(job){const rs=job.rows,i=job.part?job.part[0]:1,k=job.part?job.part[1]:1;
+ return{_subject:subjectOf(rs.length,i,k),_template:'box',_captcha:'false',annotator:S.who||'未署名',board:BOARD_NAME,date:today(),count:String(rs.length),test:TEST()?'true':'false',content:bodyOf(rs,i,k,true)}}
+async function sendJob(job){if(!DIRECT)throw new Error('未配置直接提交');let ctl=null,tm=null;try{ctl=new AbortController();tm=setTimeout(()=>ctl.abort(),25000)}catch(e){}
+ try{const r=await fetch(FORM_EP,{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify(payloadOf(job)),signal:ctl?ctl.signal:undefined});
+  let j={};try{j=await r.json()}catch(e){}if(!r.ok||!(j.success===true||j.success==='true'))throw new Error(j.message||('HTTP '+r.status));return j}
+ catch(e){throw new Error(e&&e.name==='AbortError'?'网络超时':(e&&e.message||String(e)))}finally{if(tm)clearTimeout(tm)}}
+let FLUSHING=null;
+function flush(){if(FLUSHING)return FLUSHING;FLUSHING=(async()=>{let sent=0,err=null;
+ while(S.outbox.length){const job=S.outbox[0];try{await sendJob(job);S.outbox.shift();sent+=job.rows.length;S.subLast={n:job.rows.length,ts:Date.now(),via:'direct'};save()}
+  catch(e){job.tries=(job.tries||0)+1;job.err=e.message;save();err=e.message;break}}
+ subBadge();window.__ygLastFlush={sent,err,left:S.outbox.length};return{sent,err}})();FLUSHING.then(()=>{FLUSHING=null},()=>{FLUSHING=null});return FLUSHING}
+function bgFlush(){if(DIRECT&&S.outbox.length&&navigator.onLine!==false&&!FLUSHING)flush().then(r=>{if(r.sent&&!(SUB&&SUB.busy))toast(`已补交给釉光 ✓ ${r.sent} 条`)})}
+setTimeout(bgFlush,2500);setInterval(bgFlush,60000);window.addEventListener('online',bgFlush);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')bgFlush()});
+async function openSubmit(all){menu(false);if(!rows().length&&!S.outbox.length)return toast('还没有任何标注');
+ if(!S.who)return askWho(()=>openSubmit(all));
+ const rs=pendingRows(all);
+ if(!DIRECT||(!rs.length&&!S.outbox.length)){SUB={all:!!all,undo:null};$('#subM').classList.add('on');renderSubmit();return}
+ if(rs.length)enqueue(rs);const n=queuedRows().length;
+ SUB={all:false,undo:null,busy:true};$('#subM').classList.add('on');
+ $('#subBody').innerHTML=`<div class="sstat">标注人 <b>${esc(S.who)}</b> · 看板 ${esc(BOARD_NAME)}</div><p style="font-size:15px">正在提交 <b>${n}</b> 条给釉光…</p>`;
+ const res=await flush();if(!SUB)return;SUB.busy=false;
+ if(!S.outbox.length){$('#subBody').innerHTML=`<div class="sstat">标注人 <b>${esc(S.who)}</b> · 看板 ${esc(BOARD_NAME)}</div><p style="font-size:20px;color:var(--ink);margin:6px 0 4px">已提交给釉光 ✓</p><p>${res.sent} 条已直接发到釉光邮箱，不用再做别的。之后新标的、改过的，下次点「提交」会只补交这些。</p><div class="acts"><button class="pbtn" data-s="close">好的</button></div>`;toast('已提交给釉光 ✓');return}
+ SUB.rsOverride=queuedRows();SUB.directErr=res.err||'网络不通';renderSubmit()}
+
 function closeSubmit(){$('#subM').classList.remove('on');SUB=null}
-function renderSubmit(){const all=SUB.all,rs=pendingRows(all),done=rows().length-pendingRows().length,b=$('#subBody');
+function renderSubmit(){const all=SUB.all,rs=SUB.rsOverride||pendingRows(all),done=rows().length-pendingRows().length-(SUB.rsOverride?rs.length:0),b=$('#subBody');
  const last=S.subLast?`上次提交 ${S.subLast.n} 条 · ${new Date(S.subLast.ts).toLocaleString()}`:'还没提交过';
- let h=`<div class="sstat">标注人 <b>${esc(S.who)}</b> · 看板 ${esc(BOARD_NAME)}<br>${all?'全部重新提交':'待提交（新增或改过的）'} <b>${rs.length}</b> 条 · 已提交 ${done} 条<br><span style="color:var(--mute);font-size:12px">${esc(last)}</span></div>`;
+ let h=`<div class="sstat">标注人 <b>${esc(S.who)}</b> · 看板 ${esc(BOARD_NAME)}<br>${SUB.rsOverride?'待重试':all?'全部重新提交':'待提交（新增或改过的）'} <b>${rs.length}</b> 条 · 已提交 ${Math.max(0,done)} 条<br><span style="color:var(--mute);font-size:12px">${esc(last)}</span></div>`;
+ if(SUB.directErr)h+=`<div class="opt" style="border-color:var(--accent)"><h4>没能直接提交</h4><p>原因：${esc(SUB.directErr)}。标注已存好，联网后会自动重试（也可以过会儿再点一次「提交」）。现在也可以用下面的方式发出去，重复的条目釉光会自动去重。</p><button class="gbtn" data-s="retry">⟳ 再试一次</button></div>`;
  if(!rs.length){h+=`<p>没有新的标注需要提交。改过的或新标的会自动算进下一次。</p>${SUB.undo?'<p><a href="#" data-s="undo" style="color:var(--mute)">没发出去？撤回本次标记</a></p>':''}<div class="acts"><button class="gbtn" data-s="close">关闭</button><button class="pbtn" data-s="all">全部重新提交</button></div>`;b.innerHTML=h;SUB.mails=null;return}
  const mails=splitMails(rs);SUB.mails=mails;SUB.rs=rs;
  if(IN_WX){h+=`<div class="opt"><h4>在微信里：复制后发给釉光</h4><p>微信内置浏览器打不开邮件 App。点下面按钮复制全部标注（${rs.length} 条），然后 <b>粘贴到微信聊天</b> 发给邀请你的人；或者打开手机邮件 App，发到 <b>${esc(MAIL_TO)}</b>。</p><button class="pbtn" data-s="wxcopy">⧉ 复制全部标注</button> <button class="gbtn" data-s="wxaddr">复制邮箱地址</button></div>`;
@@ -530,7 +559,7 @@ $('#subM').addEventListener('click',async e=>{if(e.target.id==='subM')return clo
   const fd=$('#subBody .foot span:last-child');if(fd&&!fd.querySelector('[data-s="undo"]'))fd.insertAdjacentHTML('afterbegin','<a href="#" data-s="undo">没发出去？撤回本次标记</a> · ');
   toast(x.k>1?`已打开第 ${x.i}/${x.k} 封`:'已打开邮件，发送即可');return}
  const s=e.target.closest('[data-s]');if(!s)return;e.preventDefault();const k=s.dataset.s;
- if(k==='close')closeSubmit();else if(k==='undo')undoMark();else if(k==='all'){SUB.all=true;SUB.undo=null;renderSubmit()}
+ if(k==='close')closeSubmit();else if(k==='retry'){closeSubmit();openSubmit(false)}else if(k==='undo')undoMark();else if(k==='all'){SUB.all=true;SUB.undo=null;renderSubmit()}
  else if(k==='who'){const v=$('#subWho').value.trim();if(!v){$('#subWho').focus();return toast('请先填名字')}S.who=v;S.asked=true;$('#who').value=v;save();const t=SUB.then;SUB=null;t()}
  else if(k==='wxcopy'){const rs=SUB.rs,full=`釉光标注｜${S.who}｜${BOARD_NAME}｜${rs.length}条\n`+bodyOf(rs,1,1,true),ok=await copyText(full);window.__lastClip=full;if(ok){markSent(rs);toast('已复制，去微信里粘贴发送');renderSubmit()}else toast('复制失败，请长按下方文字手动全选复制')}
  else if(k==='wxaddr'){const ok=await copyText(MAIL_TO);toast(ok?'邮箱地址已复制':'复制失败：'+MAIL_TO)}
